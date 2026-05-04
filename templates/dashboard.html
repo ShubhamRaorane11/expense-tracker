@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% set active = "dashboard" %}
+
+{% block title %}Dashboard – SpendWise{% endblock %}
+{% block topbar_title %}Dashboard{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-subtitle">Visual spending insights</p>
+  </div>
+  <div class="month-picker-wrap">
+    <label for="dashMonth">Month</label>
+    <input type="month" id="dashMonth" />
+  </div>
+</div>
+
+<div id="catCards" class="cat-card-grid"></div>
+
+<div class="two-col">
+
+  <section class="card">
+    <div class="card-header"><h2>Monthly Trend</h2></div>
+    <div class="chart-wrap">
+      <canvas id="trendChart"></canvas>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header"><h2>Category Breakdown</h2></div>
+    <div class="chart-wrap">
+      <canvas id="catChart"></canvas>
+    </div>
+  </section>
+
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let trendChartInst = null;
+let catChartInst   = null;
+
+// Set month picker default
+const picker = document.getElementById("dashMonth");
+picker.value = currentYearMonth();
+
+async function loadDashboard(month) {
+  try {
+    // Fetch both endpoints in parallel
+    const [dashRes, trendRes] = await Promise.all([
+      api("/api/summary/dashboard?month=" + month),
+      api("/api/summary/monthly?months=6"),
+    ]);
+
+    const data  = dashRes.data;
+    const trend = trendRes.data;
+
+    // ── Category bar cards ───────────────────────
+    const cats = data.categories || [];
+    const maxVal = cats[0]?.total || 1;
+    const catCardsContainer = document.getElementById("catCards");
+
+    if (cats.length === 0 || cats.every(c => c.total === 0)) {
+      catCardsContainer.innerHTML = '<p class="empty-msg">No transactions found for this period.</p>';
+    } else {
+      catCardsContainer.innerHTML = cats.map(c => `
+        <div class="cat-card" style="--accent:${c.color}">
+          <div class="cat-card-top">
+            <span class="cat-card-icon">${c.icon}</span>
+            <span class="cat-card-name">${c.name}</span>
+            <span class="cat-card-amt">${formatCurrency(c.total)}</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" style="width:${Math.min(100, (c.total / maxVal) * 100).toFixed(1)}%;background:${c.color}"></div>
+          </div>
+          <p class="cat-card-count">${c.count} transaction${c.count !== 1 ? "s" : ""}</p>
+        </div>`).join("");
+    }
+
+    // ── Trend bar chart ───────────────────────────
+    if (trendChartInst) trendChartInst.destroy();
+    trendChartInst = new Chart(document.getElementById("trendChart"), {
+      type: "bar",
+      data: {
+        labels:   trend.map(r => formatMonthLabel(r.month)),
+        datasets: [{
+          label:           "Total Spent (₹)",
+          data:            trend.map(r => r.total),
+          backgroundColor: trend.map((_, i) => i === trend.length - 1
+            ? "rgba(249,115,22,0.9)" : "rgba(249,115,22,0.35)"),
+          borderRadius:    8,
+          borderSkipped:   false,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: {
+          callbacks: { label: ctx => " " + formatCurrency(ctx.raw) }
+        }},
+        scales: {
+          x: { grid: { display: false }, ticks: { color: "var(--text-muted)" } },
+          y: { grid: { color: "var(--border)" }, ticks: {
+            color: "var(--text-muted)",
+            callback: v => "₹" + (v >= 1000 ? (v/1000).toFixed(1) + "k" : v)
+          }}
+        }
+      }
+    });
+
+    // ── Category doughnut ─────────────────────────
+    const activeCats = cats.filter(c => c.total > 0);
+    if (catChartInst) catChartInst.destroy();
+    catChartInst = new Chart(document.getElementById("catChart"), {
+      type: "doughnut",
+      data: {
+        labels:   activeCats.map(c => `${c.icon} ${c.name}`),
+        datasets: [{
+          data:            activeCats.map(c => c.total),
+          backgroundColor: activeCats.map(c => c.color),
+          borderWidth:     3,
+          borderColor:     "var(--bg-card)",
+          hoverOffset:     12,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        cutout: "65%",
+        plugins: {
+          legend: {
+            position: "bottom",
+            labels: { color: "var(--text-primary)", padding: 12, boxWidth: 12 }
+          },
+          tooltip: {
+            callbacks: { label: ctx => ` ${ctx.label}: ${formatCurrency(ctx.raw)}` }
+          }
+        }
+      }
+    });
+
+  } catch (err) {
+    showToast("Failed to load dashboard data: " + err.message, "error");
+  }
+}
+
+picker.addEventListener("change", () => loadDashboard(picker.value));
+loadDashboard(picker.value);
+</script>
+{% endblock %}

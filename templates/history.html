@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% set active = "history" %}
+
+{% block title %}History – SpendWise{% endblock %}
+{% block topbar_title %}History{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Expense History</h1>
+    <p class="page-subtitle">All your recorded transactions</p>
+  </div>
+  <button class="btn btn-primary btn-add" id="openAddModal">
+    <span>+</span> Add Expense
+  </button>
+</div>
+
+<div class="filter-bar card">
+  <div class="filter-group">
+    <label for="filterMonth">Month</label>
+    <input type="month" id="filterMonth" />
+  </div>
+  <div class="filter-group">
+    <label for="filterCat">Category</label>
+    <select id="filterCat">
+      </select>
+  </div>
+  <div class="filter-group search-group">
+    <label for="filterSearch">Search</label>
+    <input type="text" id="filterSearch" placeholder="Search description…" />
+  </div>
+  <div class="filter-actions">
+    <button class="btn btn-ghost" id="clearFilters">Clear</button>
+    <button class="btn btn-primary" id="applyFilters">Apply</button>
+  </div>
+  <button class="btn btn-ghost export-btn" id="exportCsv">
+    ⬇ Export CSV
+  </button>
+</div>
+
+<div class="summary-strip" id="summaryStrip">
+  <span id="summaryCount">—</span> transactions &nbsp;·&nbsp;
+  Total: <strong id="summaryTotal">—</strong>
+</div>
+
+<section class="card table-card">
+  <div class="table-wrap">
+    <table class="expense-table" id="expenseTable">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Category</th>
+          <th>Description</th>
+          <th class="text-right">Amount</th>
+          <th class="text-center">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="expenseTableBody">
+        <tr><td colspan="5" class="loading-row">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+window.loadExpenses = async function() {
+  const month  = document.getElementById("filterMonth").value;
+  const cat    = document.getElementById("filterCat").value;
+  const search = document.getElementById("filterSearch").value.trim();
+
+  let url = "/api/expenses?";
+  if (month)  url += "month="    + month  + "&";
+  if (cat)    url += "category=" + cat    + "&";
+  if (search) url += "search="   + encodeURIComponent(search) + "&";
+
+  const tbody = document.getElementById("expenseTableBody");
+  if (!tbody) return;
+
+  tbody.innerHTML = '<tr><td colspan="5" class="loading-row">Loading…</td></tr>';
+
+  try {
+    const res  = await api(url);
+    const rows = res.data || [];
+
+    const countEl = document.getElementById("summaryCount");
+    const totalEl = document.getElementById("summaryTotal");
+
+    if (countEl) countEl.textContent = rows.length;
+
+    const total = rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+    if (totalEl) totalEl.textContent = formatCurrency(total);
+
+    if (rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="loading-row">No expenses found.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows.map(e => `
+      <tr class="expense-row" data-id="${e.id}">
+        <td class="date-cell">${formatDate(e.date)}</td>
+        <td>
+          <span class="cat-badge" style="--c:${e.category_color || '#ccc'}">
+            ${e.category_icon || '📁'} ${e.category_name || 'Uncategorized'}
+          </span>
+        </td>
+        <td class="desc-cell">${e.description || '<span class="text-muted">—</span>'}</td>
+        <td class="text-right amount-cell">${formatCurrency(e.amount)}</td>
+        <td class="text-center action-cell">
+          <button class="icon-btn edit-btn"   data-id="${e.id}" title="Edit">✏️</button>
+          <button class="icon-btn delete-btn" data-id="${e.id}" title="Delete">🗑️</button>
+        </td>
+      </tr>`).join("");
+
+    tbody.querySelectorAll(".edit-btn").forEach(btn =>
+      btn.addEventListener("click", () => {
+        if (typeof openEditModal === "function") openEditModal(btn.dataset.id);
+      })
+    );
+
+    tbody.querySelectorAll(".delete-btn").forEach(btn =>
+      btn.addEventListener("click", () => {
+        if (typeof confirmDelete === "function") confirmDelete(btn.dataset.id);
+      })
+    );
+
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="5" class="loading-row">Error loading expenses.</td></tr>';
+    if (typeof showToast === "function") {
+      showToast("Failed to load expenses: " + err.message, "error");
+    }
+    console.error(err);
+  }
+};
+
+document.getElementById("applyFilters").addEventListener("click", window.loadExpenses);
+
+document.getElementById("filterSearch").addEventListener("keydown", e => {
+  if (e.key === "Enter") window.loadExpenses();
+});
+
+document.getElementById("clearFilters").addEventListener("click", () => {
+  document.getElementById("filterMonth").value  = currentYearMonth();
+  document.getElementById("filterCat").value    = "";
+  document.getElementById("filterSearch").value = "";
+  window.loadExpenses();
+});
+
+document.getElementById("exportCsv").addEventListener("click", () => {
+  const month = document.getElementById("filterMonth").value;
+  const cat   = document.getElementById("filterCat").value;
+  let url = "/api/export/csv?";
+  if (month) url += "month="    + month + "&";
+  if (cat)   url += "category=" + cat;
+  window.location.href = url;
+});
+
+// Explicit async page initiator to avoid race conditions
+async function initHistoryPage() {
+  const monthInput = document.getElementById("filterMonth");
+  if (monthInput && typeof currentYearMonth === "function") {
+    monthInput.value = currentYearMonth();
+  }
+
+  const catSelect = document.getElementById("filterCat");
+  if (catSelect && typeof populateCategorySelect === "function") {
+    await populateCategorySelect(catSelect, true);
+  }
+
+  window.loadExpenses();
+}
+
+initHistoryPage();
+</script>
+{% endblock %}

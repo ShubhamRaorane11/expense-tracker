@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% set active = "home" %}
+
+{% block title %}Overview – SpendWise{% endblock %}
+{% block topbar_title %}Overview{% endblock %}
+
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Overview</h1>
+    <p class="page-subtitle" id="currentMonthLabel">Loading…</p>
+  </div>
+  <button class="btn btn-primary btn-add" id="openAddModal">
+    <span>+</span> Add Expense
+  </button>
+</div>
+
+<div class="kpi-grid" id="kpiGrid">
+  <div class="kpi-card skeleton"></div>
+  <div class="kpi-card skeleton"></div>
+  <div class="kpi-card skeleton"></div>
+</div>
+
+<div class="two-col">
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Recent Transactions</h2>
+      <a href="/history" class="link-muted">View all →</a>
+    </div>
+    <div id="recentList" class="transaction-list">
+      <p class="empty-msg">Loading…</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2>Spending by Category</h2>
+    </div>
+    <div class="chart-wrap-small">
+      <canvas id="miniDonut"></canvas>
+    </div>
+    <div id="categoryLegend" class="cat-legend"></div>
+  </section>
+
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(async () => {
+  try {
+    const month = currentYearMonth();
+    document.getElementById("currentMonthLabel").textContent =
+      "Showing data for " + formatMonthLabel(month);
+
+    const res  = await api("/api/summary/dashboard?month=" + month);
+    const data = res.data;
+
+    // Helper to extract true number of days for the selected date context
+    const parts = month.split("-");
+    const yearNum = parseInt(parts[0], 10);
+    const monthNum = parseInt(parts[1], 10);
+    const daysInMonth = new Date(yearNum, monthNum, 0).getDate();
+
+    // KPI Section
+    document.getElementById("kpiGrid").innerHTML = `
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background:#f97316">💸</div>
+        <div class="kpi-body">
+          <p class="kpi-label">Total Spent</p>
+          <p class="kpi-value">${formatCurrency(data.month_total)}</p>
+          <p class="kpi-sub">${data.month_count} transactions</p>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background:#06b6d4">📅</div>
+        <div class="kpi-body">
+          <p class="kpi-label">Daily Average</p>
+          <p class="kpi-value">${formatCurrency(data.month_total / daysInMonth)}</p>
+          <p class="kpi-sub">This month</p>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon" style="background:#8b5cf6">🏆</div>
+        <div class="kpi-body">
+          <p class="kpi-label">Top Category</p>
+          <p class="kpi-value">${data.categories[0]?.name || '—'}</p>
+          <p class="kpi-sub">${formatCurrency(data.categories[0]?.total || 0)}</p>
+        </div>
+      </div>
+    `;
+
+    // Recent transaction list
+    const list = document.getElementById("recentList");
+    if (!data.recent || data.recent.length === 0) {
+      list.innerHTML = '<p class="empty-msg">No transactions yet.</p>';
+    } else {
+      list.innerHTML = data.recent.map(e => {
+        // Fallback row renderer if transactionRow does not exist globally
+        return typeof transactionRow === 'function' ? transactionRow(e) : `
+          <div class="transaction-item">
+            <div class="item-left">
+              <span class="item-icon" style="background:${e.category_color}">${e.category_icon}</span>
+              <div class="item-details">
+                <p class="item-title">${e.description || e.category_name}</p>
+                <p class="item-subtitle">${formatDate(e.date)}</p>
+              </div>
+            </div>
+            <div class="item-right">
+              <p class="item-amount">${formatCurrency(e.amount)}</p>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    // Mini donut configuration
+    const cats   = (data.categories || []).filter(c => c.total > 0);
+    const legend = document.getElementById("categoryLegend");
+    
+    if (cats.length === 0) {
+      legend.innerHTML = '<p class="empty-msg">No category data to visualize</p>';
+    } else {
+      legend.innerHTML = cats.slice(0, 5).map(c => `
+        <div class="legend-item">
+          <span class="legend-dot" style="background:${c.color}"></span>
+          <span class="legend-name">${c.icon} ${c.name}</span>
+          <span class="legend-val">${formatCurrency(c.total)}</span>
+        </div>`).join("");
+
+      new Chart(document.getElementById("miniDonut"), {
+        type: "doughnut",
+        data: {
+          labels:   cats.map(c => c.name),
+          datasets: [{
+            data:            cats.map(c => c.total),
+            backgroundColor: cats.map(c => c.color),
+            borderWidth:     2,
+            borderColor:     "var(--bg-card)",
+            hoverOffset:     8,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: true,
+          cutout: "70%",
+          plugins: { legend: { display: false }, tooltip: {
+            callbacks: { label: ctx => ` ${ctx.label}: ${formatCurrency(ctx.raw)}` }
+          }}
+        }
+      });
+    }
+
+  } catch (err) {
+    showToast("Failed to load overview: " + err.message, "error");
+  }
+})();
+</script>
+{% endblock %}
